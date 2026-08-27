@@ -1,6 +1,48 @@
+import base64
+import binascii
+import re
 from datetime import datetime, timezone
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
+
+MAX_PHOTO_BYTES = 2 * 1024 * 1024
+MAX_PHOTO_MB = MAX_PHOTO_BYTES // (1024 * 1024)
+PHOTO_MIME_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif")
+
+_PHOTO_DATA_URL = re.compile(
+    r"data:(?P<mime>image/(?:png|jpeg|webp|gif));base64,(?P<data>[A-Za-z0-9+/]+={0,2})",
+    re.DOTALL,
+)
+
+
+def _check_photo(value: str) -> str:
+    """Reject anything that is not a small, base64-encoded raster image."""
+    photo = value.strip()
+
+    match = _PHOTO_DATA_URL.fullmatch(photo)
+    if match is None:
+        raise ValueError(f"Photo must be a base64 data URL for one of: {', '.join(PHOTO_MIME_TYPES)}")
+
+    try:
+        decoded = base64.b64decode(match.group("data"), validate=True)
+    except binascii.Error as exc:
+        raise ValueError("Photo is not valid base64") from exc
+
+    if not decoded:
+        raise ValueError("Photo is empty")
+    if len(decoded) > MAX_PHOTO_BYTES:
+        raise ValueError(f"Photo must be {MAX_PHOTO_MB} MB or smaller")
+
+    return photo
+
+
+PhotoDataUrl = Annotated[str, AfterValidator(_check_photo)]
+
+_EXAMPLE_PHOTO = (
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+    "AAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+)
 
 
 class ContactBase(BaseModel):
@@ -31,6 +73,15 @@ class ContactBase(BaseModel):
         max_length=40,
         description="Phone number. Stored verbatim — any format is accepted.",
         examples=["+1-415-555-0101"],
+    )
+    photo: PhotoDataUrl | None = Field(
+        default=None,
+        description=(
+            "Profile picture as a base64 data URL. "
+            f"One of {', '.join(PHOTO_MIME_TYPES)}, up to {MAX_PHOTO_MB} MB decoded. "
+            "Omit or send `null` for no photo."
+        ),
+        examples=[_EXAMPLE_PHOTO],
     )
     company: str | None = Field(
         default=None,
@@ -76,6 +127,7 @@ _FULL_EXAMPLE = {
     "last_name": "Lovelace",
     "email": "ada@example.com",
     "phone": "+1-415-555-0101",
+    "photo": _EXAMPLE_PHOTO,
     "company": "Analytical Engines",
     "job_title": "Mathematician",
     "address": "1 Market St, Suite 400",
@@ -126,6 +178,10 @@ class ContactUpdate(BaseModel):
         description="New email address. Must not belong to another contact.",
     )
     phone: str | None = Field(default=None, max_length=40, description="New phone number.")
+    photo: PhotoDataUrl | None = Field(
+        default=None,
+        description="New profile picture as a base64 data URL, or `null` to remove the current one.",
+    )
     company: str | None = Field(default=None, max_length=200, description="New company.")
     job_title: str | None = Field(default=None, max_length=200, description="New job title.")
     address: str | None = Field(default=None, max_length=300, description="New street address.")
