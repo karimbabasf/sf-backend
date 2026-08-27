@@ -1,7 +1,7 @@
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models import Contact
+from app.models import Address, Contact
 from app.schemas import ContactCreate, ContactReplace, ContactUpdate
 
 SORTABLE_FIELDS = ("id", "first_name", "last_name", "email", "company", "created_at", "updated_at")
@@ -9,6 +9,10 @@ SORTABLE_FIELDS = ("id", "first_name", "last_name", "email", "company", "created
 
 def _normalize_email(email: str) -> str:
     return email.strip().lower()
+
+
+def _build_addresses(rows: list[dict]) -> list[Address]:
+    return [Address(**row) for row in rows]
 
 
 def get_contact(db: Session, contact_id: int) -> Contact | None:
@@ -60,7 +64,9 @@ def list_contacts(
 
 
 def create_contact(db: Session, payload: ContactCreate) -> Contact:
+    # model_dump returns a fresh dict, so popping here never touches the caller's payload.
     data = payload.model_dump()
+    data["addresses"] = _build_addresses(data["addresses"])
     data["email"] = _normalize_email(data["email"])
     contact = Contact(**data)
     db.add(contact)
@@ -71,6 +77,10 @@ def create_contact(db: Session, payload: ContactCreate) -> Contact:
 
 def replace_contact(db: Session, contact: Contact, payload: ContactReplace) -> Contact:
     for field, value in payload.model_dump().items():
+        if field == "addresses":
+            # Assigning a new list replaces the whole set; delete-orphan removes the old rows.
+            contact.addresses = _build_addresses(value)
+            continue
         setattr(contact, field, _normalize_email(value) if field == "email" else value)
     db.commit()
     db.refresh(contact)
@@ -79,6 +89,9 @@ def replace_contact(db: Session, contact: Contact, payload: ContactReplace) -> C
 
 def update_contact(db: Session, contact: Contact, payload: ContactUpdate) -> Contact:
     for field, value in payload.model_dump(exclude_unset=True).items():
+        if field == "addresses":
+            contact.addresses = _build_addresses(value or [])
+            continue
         setattr(contact, field, _normalize_email(value) if field == "email" else value)
     db.commit()
     db.refresh(contact)
