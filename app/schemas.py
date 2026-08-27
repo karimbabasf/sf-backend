@@ -149,8 +149,8 @@ _WORK_ADDRESS_EXAMPLE = {
 
 MAX_ADDRESSES = 10
 ADDRESSES_DESCRIPTION = (
-    "Every address held for this contact, in any mix of types. A contact can have as "
-    "many as you send. Omit the field or send `[]` for a contact with no address."
+    "Every postal address held for this contact, each marked Home, Work or Other. "
+    f"At most {MAX_ADDRESSES}. Omit the field or send `[]` for a contact with no address."
 )
 
 
@@ -229,7 +229,7 @@ class ContactBase(BaseModel):
     addresses: list[AddressCreate] = Field(
         default_factory=list,
         max_length=MAX_ADDRESSES,
-        description=f"{ADDRESSES_DESCRIPTION} At most {MAX_ADDRESSES}.",
+        description=ADDRESSES_DESCRIPTION,
         examples=[[_HOME_ADDRESS_EXAMPLE, _WORK_ADDRESS_EXAMPLE]],
     )
 
