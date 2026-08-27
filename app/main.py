@@ -21,10 +21,10 @@ settings = get_settings()
 API_DESCRIPTION = """
 A self-contained REST API for storing people's basic contact information.
 
-By default the service runs against an **in-process SQLite database**, so no
-external database is required — start the process and the API is ready. Data is
-lost when the process exits; set `CONTACTS_DATABASE_URL` to a file or Postgres
-URL to persist it.
+By default the service runs against an **SQLite file** beside the process, so no
+external database is required — start the process and the API is ready. Contacts
+survive a restart; set `CONTACTS_DATABASE_URL` to `sqlite+pysqlite:///:memory:`
+for a throwaway database, or to a Postgres URL.
 
 ### Conventions
 
@@ -72,7 +72,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title=settings.app_name,
     version=__version__,
-    summary="Self-contained Contacts REST API backed by an in-memory database.",
+    summary="Self-contained Contacts REST API backed by an SQLite file.",
     description=API_DESCRIPTION,
     openapi_tags=TAGS_METADATA,
     contact={"name": "sf-backend", "url": "https://github.com/David-Parry/sf-backend"},

@@ -20,6 +20,10 @@ class Contact(Base):
     email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
     phone: Mapped[str | None] = mapped_column(String(40))
 
+    # Base64 data URL rather than a file path, so a contact stays one row with
+    # no storage backend to configure. Size is capped in the schema.
+    photo: Mapped[str | None] = mapped_column(Text)
+
     company: Mapped[str | None] = mapped_column(String(200))
     job_title: Mapped[str | None] = mapped_column(String(200))
 

@@ -34,7 +34,7 @@ def test_info_block_is_populated(spec):
     info = spec["info"]
     assert info["title"] == "Contacts API"
     assert info["version"]
-    assert "in-process SQLite" in info["description"]
+    assert "SQLite file" in info["description"]
     assert info["summary"]
     assert info["contact"]["url"].endswith("/sf-backend")
     assert info["license"]["name"] == "MIT"

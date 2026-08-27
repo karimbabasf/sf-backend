@@ -10,12 +10,11 @@ class Settings(BaseSettings):
 
     app_name: str = "Contacts API"
 
-    # Defaults to an in-process SQLite database so the app is self-contained.
-    # Point this at a file (sqlite:///./contacts.db) or Postgres to persist data.
-    database_url: str = "sqlite+pysqlite:///:memory:"
+    # Defaults to an on-disk SQLite file so data survives a restart.
+    # Point this at Postgres for a shared database.
+    database_url: str = "sqlite:///./contacts.db"
 
-    # Insert a few sample contacts on startup. Handy for the in-memory default,
-    # which starts empty on every boot.
+    # Insert a few sample contacts on startup, skipped once the table has rows.
     seed_data: bool = True
 
     host: str = "127.0.0.1"
