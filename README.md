@@ -113,11 +113,19 @@ also read):
 (case-insensitive). Everything else is optional.
 
 ```
-first_name, last_name, email, phone, company, job_title,
-address, city, state, postal_code, country, notes
+first_name, last_name, email, phone, photo, company, job_title, notes, addresses
 ```
 
 Responses add `id`, `full_name`, `created_at`, and `updated_at` (UTC).
+
+### Addresses
+
+Addresses live in their own table, one row per address, with a foreign key back
+to the contact and `ON DELETE CASCADE`, so a contact can hold any number of them
+and deleting the contact removes them all. Each address is `{type, street, city,
+state, postal_code, country}`, where `type` is `Home`, `Work`, or `Other` and
+`street` is required. `PUT` and `PATCH` treat `addresses` as a set: the list you
+send replaces every address the contact had.
 
 ### List query parameters
 
