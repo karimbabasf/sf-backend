@@ -1,3 +1,11 @@
+import base64
+import struct
+import zlib
+
+import pytest
+
+from app.schemas import MAX_PHOTO_BYTES
+
 BASE = "/api/v1/contacts"
 
 
@@ -144,3 +152,71 @@ def test_delete_contact(client, payload):
 def test_root_lists_entrypoints(client):
     body = client.get("/").json()
     assert body["contacts"] == BASE
+
+
+def _png(size: int = 8) -> bytes:
+    """Smallest real PNG we can build without an imaging dependency."""
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
+
+    rows = b"".join(b"\x00" + bytes((10, 120, 200)) * size for _ in range(size))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(rows))
+        + chunk(b"IEND", b"")
+    )
+
+
+def _data_url(mime: str, raw: bytes) -> str:
+    return f"data:{mime};base64,{base64.b64encode(raw).decode()}"
+
+
+def test_create_contact_with_photo(client, payload):
+    photo = _data_url("image/png", _png())
+    response = client.post(BASE, json={**payload, "photo": photo})
+    assert response.status_code == 201
+    assert response.json()["photo"] == photo
+
+
+def test_photo_defaults_to_null(client, payload):
+    assert client.post(BASE, json=payload).json()["photo"] is None
+
+
+def test_put_carrying_photo_keeps_it(client, payload):
+    photo = _data_url("image/png", _png())
+    contact_id = client.post(BASE, json={**payload, "photo": photo}).json()["id"]
+    response = client.put(f"{BASE}/{contact_id}", json={**payload, "photo": photo})
+    assert response.json()["photo"] == photo
+
+
+def test_put_omitting_photo_clears_it(client, payload):
+    photo = _data_url("image/png", _png())
+    contact_id = client.post(BASE, json={**payload, "photo": photo}).json()["id"]
+    assert client.put(f"{BASE}/{contact_id}", json=payload).json()["photo"] is None
+
+
+@pytest.mark.parametrize(
+    "photo",
+    [
+        "https://example.com/ada.png",
+        "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",  # SVG can carry script
+        "data:image/png;base64,!!!not-base64!!!",
+        "data:image/png;base64,",
+    ],
+)
+def test_photo_rejects_bad_data_urls(client, payload, photo):
+    assert client.post(BASE, json={**payload, "photo": photo}).status_code == 422
+
+
+def test_photo_rejects_content_that_is_not_the_declared_type(client, payload):
+    disguised = _data_url("image/png", b"PK\x03\x04 this is a zip, not a png")
+    assert client.post(BASE, json={**payload, "photo": disguised}).status_code == 422
+    mislabelled = _data_url("image/jpeg", _png())
+    assert client.post(BASE, json={**payload, "photo": mislabelled}).status_code == 422
+
+
+def test_photo_rejects_oversized_image(client, payload):
+    oversized = _data_url("image/png", _png() + b"\x00" * MAX_PHOTO_BYTES)
+    assert client.post(BASE, json={**payload, "photo": oversized}).status_code == 422
