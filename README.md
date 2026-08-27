@@ -1,7 +1,7 @@
 # Contacts Backend
 
 A self-contained Contacts REST API built with **FastAPI** + **SQLAlchemy**, backed by an
-**in-memory SQLite database** by default. No external database, container, or migration
+**on-disk SQLite file** by default. No external database, container, or migration
 step is needed — start the process and the API is ready.
 
 ## Quickstart
@@ -59,18 +59,24 @@ by the tags declared in `app/main.py`, and each documents its error responses (`
 Neither UI requires the docs to be enabled explicitly; to turn them off in a deployment,
 pass `docs_url=None` / `redoc_url=None` to `FastAPI(...)` in `app/main.py`.
 
-## The in-memory database
+## The database
 
-`CONTACTS_DATABASE_URL` defaults to `sqlite+pysqlite:///:memory:`. A plain in-memory
-SQLite database normally dies with the connection that opened it, so `app/database.py`
-uses SQLAlchemy's `StaticPool` to hold one connection open for the process's lifetime.
-Every request — including ones FastAPI runs on a worker thread — sees the same data.
+`CONTACTS_DATABASE_URL` defaults to `sqlite:///./contacts.db`, a file beside the
+process, so **contacts survive a restart**. Three sample contacts are seeded on first
+run, and skipped once the table has rows.
 
-**Data is lost when the process exits.** Because of that, three sample contacts are
-seeded on startup so the API is never empty. To persist instead, point at a file:
+Schemas are created with `Base.metadata.create_all`, which adds missing tables but
+never alters an existing one. After changing a model, delete the file and let it be
+rebuilt:
 
 ```bash
-CONTACTS_DATABASE_URL="sqlite+pysqlite:///./contacts.db" .venv/bin/python -m app.main
+rm contacts.db && .venv/bin/python -m app.main
+```
+
+To go back to a throwaway database that empties on every boot, point at memory:
+
+```bash
+CONTACTS_DATABASE_URL="sqlite+pysqlite:///:memory:" .venv/bin/python -m app.main
 ```
 
 The same code runs unchanged against Postgres (`postgresql+psycopg://...`).
@@ -82,7 +88,7 @@ also read):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `CONTACTS_DATABASE_URL` | `sqlite+pysqlite:///:memory:` | SQLAlchemy URL |
+| `CONTACTS_DATABASE_URL` | `sqlite:///./contacts.db` | SQLAlchemy URL |
 | `CONTACTS_SEED_DATA` | `true` | Insert sample contacts if the DB is empty |
 | `CONTACTS_HOST` | `127.0.0.1` | Bind address |
 | `CONTACTS_PORT` | `8000` | Bind port |
@@ -169,11 +175,11 @@ Tests run against their own empty in-memory database with seeding disabled
 app/
   main.py             FastAPI app, lifespan startup, /health and /
   config.py           Environment-driven settings
-  database.py         Engine, session factory, StaticPool in-memory wiring
+  database.py         Engine, session factory, StaticPool wiring
   models.py           Contact ORM model
   schemas.py          Pydantic request/response models
   crud.py             Database operations (search, sort, paginate)
-  seed.py             Sample contacts for the in-memory default
+  seed.py             Sample contacts inserted on first run
   routers/contacts.py REST endpoints
 tests/                API tests via FastAPI TestClient
 ```
