@@ -3,8 +3,11 @@ import struct
 import zlib
 
 import pytest
+from sqlalchemy import func, select
 
-from app.schemas import MAX_PHOTO_BYTES
+from app.database import SessionLocal
+from app.models import Address
+from app.schemas import MAX_ADDRESSES, MAX_PHOTO_BYTES
 
 BASE = "/api/v1/contacts"
 
@@ -220,3 +223,113 @@ def test_photo_rejects_content_that_is_not_the_declared_type(client, payload):
 def test_photo_rejects_oversized_image(client, payload):
     oversized = _data_url("image/png", _png() + b"\x00" * MAX_PHOTO_BYTES)
     assert client.post(BASE, json={**payload, "photo": oversized}).status_code == 422
+
+
+HOME_ADDRESS = {
+    "type": "Home",
+    "street": "12 Ockham Rd",
+    "city": "San Francisco",
+    "state": "CA",
+    "postal_code": "94110",
+    "country": "USA",
+}
+WORK_ADDRESS = {
+    "type": "Work",
+    "street": "1 Market St, Suite 400",
+    "city": "San Francisco",
+    "state": "CA",
+    "postal_code": "94105",
+    "country": "USA",
+}
+
+
+def _stored_address_count() -> int:
+    """Count rows in the addresses table itself, not the ones a contact reports."""
+    with SessionLocal() as db:
+        return db.execute(select(func.count()).select_from(Address)).scalar_one()
+
+
+def test_create_contact_with_two_addresses(client, payload):
+    response = client.post(BASE, json={**payload, "addresses": [HOME_ADDRESS, WORK_ADDRESS]})
+    assert response.status_code == 201
+    addresses = response.json()["addresses"]
+    assert len(addresses) == 2
+    assert [address["type"] for address in addresses] == ["Home", "Work"]
+    assert all(address["id"] > 0 for address in addresses)
+
+
+def test_addresses_read_back_grouped_by_type(client, payload):
+    contact_id = client.post(BASE, json={**payload, "addresses": [HOME_ADDRESS, WORK_ADDRESS]}).json()["id"]
+
+    body = client.get(f"{BASE}/{contact_id}").json()
+    by_type = {address["type"]: address for address in body["addresses"]}
+    assert set(by_type) == {"Home", "Work"}
+    assert by_type["Home"]["street"] == HOME_ADDRESS["street"]
+    assert by_type["Work"]["postal_code"] == "94105"
+
+
+def test_contact_without_addresses_is_allowed(client, payload):
+    body = client.post(BASE, json={**payload, "addresses": []}).json()
+    assert body["addresses"] == []
+    omitted = {key: value for key, value in payload.items() if key != "addresses"}
+    assert client.post(BASE, json={**omitted, "email": "grace@example.com"}).json()["addresses"] == []
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        {**HOME_ADDRESS, "type": "Holiday"},  # outside the allowed set
+        {**HOME_ADDRESS, "type": ""},
+        {key: value for key, value in HOME_ADDRESS.items() if key != "type"},  # missing
+        {**HOME_ADDRESS, "street": ""},
+        {**HOME_ADDRESS, "street": "   "},  # blank once trimmed
+        {**HOME_ADDRESS, "street": "x" * 301},  # over max_length
+        {**HOME_ADDRESS, "postal_code": "x" * 21},
+    ],
+)
+def test_address_rejects_invalid_input(client, payload, address):
+    assert client.post(BASE, json={**payload, "addresses": [address]}).status_code == 422
+
+
+def test_put_replaces_the_whole_address_set(client, payload):
+    contact_id = client.post(BASE, json={**payload, "addresses": [HOME_ADDRESS, WORK_ADDRESS]}).json()["id"]
+
+    replaced = client.put(f"{BASE}/{contact_id}", json={**payload, "addresses": [WORK_ADDRESS]})
+    assert replaced.status_code == 200
+    assert [address["type"] for address in replaced.json()["addresses"]] == ["Work"]
+    assert _stored_address_count() == 1  # the two originals are gone, not orphaned
+
+    cleared = client.put(f"{BASE}/{contact_id}", json={**payload, "addresses": []})
+    assert cleared.json()["addresses"] == []
+    assert _stored_address_count() == 0
+
+
+def test_patch_leaves_addresses_alone_unless_sent(client, payload):
+    contact_id = client.post(BASE, json={**payload, "addresses": [HOME_ADDRESS]}).json()["id"]
+
+    untouched = client.patch(f"{BASE}/{contact_id}", json={"phone": "+1-000-000-0000"})
+    assert len(untouched.json()["addresses"]) == 1
+
+    rewritten = client.patch(f"{BASE}/{contact_id}", json={"addresses": [WORK_ADDRESS]})
+    assert [address["type"] for address in rewritten.json()["addresses"]] == ["Work"]
+    assert _stored_address_count() == 1
+
+
+def test_deleting_a_contact_deletes_its_addresses(client, payload):
+    contact_id = client.post(BASE, json={**payload, "addresses": [HOME_ADDRESS, WORK_ADDRESS]}).json()["id"]
+    kept_id = client.post(
+        BASE, json={**payload, "email": "grace@example.com", "addresses": [WORK_ADDRESS]}
+    ).json()["id"]
+    assert _stored_address_count() == 3
+
+    assert client.delete(f"{BASE}/{contact_id}").status_code == 204
+    assert _stored_address_count() == 1  # only the other contact's address survives
+    assert len(client.get(f"{BASE}/{kept_id}").json()["addresses"]) == 1
+
+
+def test_rejects_more_addresses_than_the_cap(client, payload):
+    too_many = [
+        {"type": "Other", "street": f"{n} Long Road"} for n in range(MAX_ADDRESSES + 1)
+    ]
+    response = client.post(BASE, json={**payload, "addresses": too_many})
+    assert response.status_code == 422

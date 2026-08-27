@@ -58,6 +58,9 @@ def create_contact(payload: ContactCreate, db: Session = Depends(get_db)) -> Con
     `first_name`, `last_name`, and `email` are required; every other field is
     optional. The email must be unique — a duplicate (compared case-insensitively)
     is rejected with `409 Conflict` rather than creating a second record.
+
+    Pass `addresses` to store any number of addresses in one call, each tagged
+    `Home`, `Work`, or `Other`.
     """
     _reject_duplicate_email(db, payload.email)
     return crud.create_contact(db, payload)
@@ -138,7 +141,9 @@ def replace_contact(
     Replace every field of an existing contact.
 
     This is a true `PUT`: optional fields you leave out of the body are cleared
-    to `null`. To change a subset of fields, use `PATCH` instead.
+    to `null`. `addresses` follows the same rule as a set: the list you send
+    becomes the contact's whole set, and leaving it out deletes every address.
+    To change a subset of fields, use `PATCH` instead.
     """
     contact = _get_or_404(db, contact_id)
     _reject_duplicate_email(db, payload.email, exclude_id=contact_id)
@@ -163,7 +168,8 @@ def update_contact(
 
     Fields you omit keep their current value. Re-sending a contact's own email
     address is allowed; using an email that belongs to a different contact
-    returns `409 Conflict`.
+    returns `409 Conflict`. Sending `addresses` replaces the whole set, so omit
+    it unless you mean to rewrite every address.
     """
     contact = _get_or_404(db, contact_id)
     if payload.email is not None:
