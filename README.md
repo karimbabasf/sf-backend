@@ -121,11 +121,15 @@ Responses add `id`, `full_name`, `created_at`, and `updated_at` (UTC).
 ### Addresses
 
 Addresses live in their own table, one row per address, with a foreign key back
-to the contact and `ON DELETE CASCADE`, so a contact can hold any number of them
-and deleting the contact removes them all. Each address is `{type, street, city,
-state, postal_code, country}`, where `type` is `Home`, `Work`, or `Other` and
-`street` is required. `PUT` and `PATCH` treat `addresses` as a set: the list you
-send replaces every address the contact had.
+to the contact and `ON DELETE CASCADE`, so deleting a contact removes them all.
+A contact may hold up to **10**; a longer list is rejected with `422`.
+
+You send `{type, street, city, state, postal_code, country}`. Both `type` and
+`street` are required, and `type` must be `Home`, `Work`, or `Other`. Responses
+add a server-assigned `id` to each address.
+
+`PUT` and `PATCH` treat `addresses` as a set: the list you send replaces every
+address the contact had.
 
 ### List query parameters
 
