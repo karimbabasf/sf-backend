@@ -1,197 +1,84 @@
-# Contacts Backend
+# sf-backend
 
-A self-contained Contacts REST API built with **FastAPI** + **SQLAlchemy**, backed by an
-**on-disk SQLite file** by default. No external database, container, or migration
-step is needed — start the process and the API is ready.
+A Contacts REST API in FastAPI and SQLAlchemy that runs from one command, with no database server to set up.
 
-## Quickstart
+Built at the **Roast My PR** event at GitHub HQ: a two-hour build judged on Qodo-reviewed pull requests, where it placed top 10. The UI is [sf-frontend](https://github.com/karimbabasf/sf-frontend). The write-up is [roast-my-pr](https://github.com/karimbabasf/roast-my-pr).
+
+## How it works
+
+- **Storage.** `CONTACTS_DATABASE_URL` defaults to `sqlite:///./contacts.db`, a file beside the process, so contacts survive a restart. The same code runs on Postgres (`postgresql+psycopg://...`).
+- **Startup.** The lifespan hook runs `Base.metadata.create_all`, then seeds three sample contacts if the table is empty. `create_all` adds missing tables but never alters one, so after a model change, delete `contacts.db`.
+- **Contacts.** `first_name`, `last_name` and `email` are required; email is unique, case-insensitive (`409` on a duplicate). Optional: `phone`, `photo`, `company`, `job_title`, `notes`, `addresses`.
+- **Photos.** A base64 data URL, PNG, JPEG, WebP or GIF, up to 512 KB. The server decodes it and checks the file's magic bytes match the declared type, so a renamed file is rejected.
+- **Addresses.** Their own table, foreign key to the contact with `ON DELETE CASCADE`. Up to 10 per contact; `type` (`Home`, `Work`, `Other`) and `street` are required. `PUT` and `PATCH` treat the list as a set: what you send replaces what was there.
+- **Docs.** FastAPI builds the OpenAPI schema from the route signatures and Pydantic models, so `/docs`, `/redoc` and `/openapi.json` always match the code. Every endpoint documents its `404`, `409` and `422` responses.
+
+## API
+
+| Method | Path | What it does |
+| --- | --- | --- |
+| `GET` | `/health` | Liveness, database check, contact count |
+| `GET` | `/` | Entry-point listing |
+| `POST` | `/api/v1/contacts` | Create, `201` |
+| `GET` | `/api/v1/contacts` | List: `search`, `limit` (1 to 200, default 50), `offset`, `sort_by`, `order` |
+| `GET` | `/api/v1/contacts/{id}` | Fetch one |
+| `PUT` | `/api/v1/contacts/{id}` | Full replace, omitted fields are cleared |
+| `PATCH` | `/api/v1/contacts/{id}` | Partial update, only sent fields change |
+| `DELETE` | `/api/v1/contacts/{id}` | Delete, `204` |
+
+`search` is a case-insensitive substring match on name, email, company and phone. `sort_by` takes `id`, `first_name`, `last_name`, `email`, `company`, `created_at` or `updated_at`. Lists come back as `{ "items": [...], "total": 12, "limit": 50, "offset": 0 }`.
+
+## Run
 
 ```bash
 uv venv && uv pip install -e ".[dev]"     # or: python -m venv .venv && pip install -r requirements.txt
-.venv/bin/python -m app.main
+.venv/bin/python -m app.main              # or: .venv/bin/uvicorn app.main:app --reload
 ```
 
-Then open <http://127.0.0.1:8000/docs> for interactive Swagger UI.
-
-Alternatively, with uvicorn directly (adds `--reload`):
+Open <http://127.0.0.1:8000/docs>. `GET /api/v1/contacts` returns the three seeded contacts.
 
 ```bash
-.venv/bin/uvicorn app.main:app --reload
+curl -X POST http://127.0.0.1:8000/api/v1/contacts \
+  -H 'content-type: application/json' \
+  -d '{"first_name":"Katherine","last_name":"Johnson","email":"katherine@example.com","company":"NASA"}'
+
+curl "http://127.0.0.1:8000/api/v1/contacts?search=nasa&sort_by=last_name"
 ```
 
-## Interactive API docs
-
-FastAPI generates an OpenAPI schema from the route signatures and Pydantic models, so
-the docs are never out of date with the code. With the server running, three URLs are
-served:
-
-| URL | What it is |
-| --- | --- |
-| <http://127.0.0.1:8000/docs> | **Swagger UI** — browse endpoints and send real requests from the browser |
-| <http://127.0.0.1:8000/redoc> | **ReDoc** — read-only reference, easier for reading schemas end to end |
-| <http://127.0.0.1:8000/openapi.json> | Raw OpenAPI 3.1 schema, for client generators and Postman/Insomnia imports |
-
-If you changed `CONTACTS_HOST` or `CONTACTS_PORT`, substitute those instead.
-
-### Trying a request in Swagger UI
-
-1. Expand an endpoint, e.g. `POST /api/v1/contacts`.
-2. Click **Try it out** — the request body becomes editable and is pre-filled with an
-   example.
-3. Edit the JSON and click **Execute**.
-4. The response status, body, and headers appear below, along with the equivalent
-   `curl` command you can copy.
-
-Since the default database is seeded on startup, `GET /api/v1/contacts` returns three
-contacts immediately — a good first call to confirm things work. Anything you create
-through the UI lives only until the process exits.
-
-### Reading the schemas
-
-Both UIs list every model under **Schemas** (ReDoc) or **Schemas** at the bottom of the
-page (Swagger UI). `ContactCreate`, `ContactReplace` (PUT), `ContactUpdate` (PATCH),
-`ContactRead`, and `ContactPage` show exactly which fields are required, which are
-nullable, and the validation rules — the same constraints described in
-[Contact fields](#contact-fields) below. Endpoints are grouped
-by the tags declared in `app/main.py`, and each documents its error responses (`404`,
-`409`, `422`) with example payloads.
-
-Neither UI requires the docs to be enabled explicitly; to turn them off in a deployment,
-pass `docs_url=None` / `redoc_url=None` to `FastAPI(...)` in `app/main.py`.
-
-## The database
-
-`CONTACTS_DATABASE_URL` defaults to `sqlite:///./contacts.db`, a file beside the
-process, so **contacts survive a restart**. Three sample contacts are seeded on first
-run, and skipped once the table has rows.
-
-Schemas are created with `Base.metadata.create_all`, which adds missing tables but
-never alters an existing one. After changing a model, delete the file and let it be
-rebuilt:
-
-```bash
-rm contacts.db && .venv/bin/python -m app.main
-```
-
-To go back to a throwaway database that empties on every boot, point at memory:
+For a throwaway database that empties on every boot:
 
 ```bash
 CONTACTS_DATABASE_URL="sqlite+pysqlite:///:memory:" .venv/bin/python -m app.main
 ```
 
-The same code runs unchanged against Postgres (`postgresql+psycopg://...`).
+All settings are `CONTACTS_` environment variables (a `.env` file is read too):
 
-### Configuration
+| Variable | Default |
+| --- | --- |
+| `CONTACTS_DATABASE_URL` | `sqlite:///./contacts.db` |
+| `CONTACTS_SEED_DATA` | `true` |
+| `CONTACTS_HOST` | `127.0.0.1` |
+| `CONTACTS_PORT` | `8000` |
+| `CONTACTS_SQL_ECHO` | `false` |
 
-All settings are environment variables prefixed with `CONTACTS_` (a `.env` file is
-also read):
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `CONTACTS_DATABASE_URL` | `sqlite:///./contacts.db` | SQLAlchemy URL |
-| `CONTACTS_SEED_DATA` | `true` | Insert sample contacts if the DB is empty |
-| `CONTACTS_HOST` | `127.0.0.1` | Bind address |
-| `CONTACTS_PORT` | `8000` | Bind port |
-| `CONTACTS_SQL_ECHO` | `false` | Log every SQL statement |
-
-## API
-
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/health` | Liveness + database check and contact count |
-| `GET` | `/` | Entry-point listing |
-| `POST` | `/api/v1/contacts` | Create a contact → `201` |
-| `GET` | `/api/v1/contacts` | List with search, sort, pagination |
-| `GET` | `/api/v1/contacts/{id}` | Fetch one contact |
-| `PUT` | `/api/v1/contacts/{id}` | Full replace (omitted fields are cleared) |
-| `PATCH` | `/api/v1/contacts/{id}` | Partial update (only sent fields change) |
-| `DELETE` | `/api/v1/contacts/{id}` | Delete → `204` |
-
-### Contact fields
-
-`first_name` and `last_name` are required; `email` is required and unique
-(case-insensitive). Everything else is optional.
-
-```
-first_name, last_name, email, phone, photo, company, job_title, notes, addresses
-```
-
-Responses add `id`, `full_name`, `created_at`, and `updated_at` (UTC).
-
-### Addresses
-
-Addresses live in their own table, one row per address, with a foreign key back
-to the contact and `ON DELETE CASCADE`, so deleting a contact removes them all.
-A contact may hold up to **10**; a longer list is rejected with `422`.
-
-You send `{type, street, city, state, postal_code, country}`. Both `type` and
-`street` are required, and `type` must be `Home`, `Work`, or `Other`. Responses
-add a server-assigned `id` to each address.
-
-`PUT` and `PATCH` treat `addresses` as a set: the list you send replaces every
-address the contact had.
-
-### List query parameters
-
-| Param | Default | Notes |
-| --- | --- | --- |
-| `search` | – | Case-insensitive substring match on name, email, company, phone |
-| `limit` | `50` | 1–200 |
-| `offset` | `0` | |
-| `sort_by` | `id` | `id`, `first_name`, `last_name`, `email`, `company`, `created_at`, `updated_at` |
-| `order` | `asc` | `asc` or `desc` |
-
-List responses are wrapped so clients can paginate:
-
-```json
-{ "items": [ ... ], "total": 12, "limit": 50, "offset": 0 }
-```
-
-### Status codes
-
-`201` created · `204` deleted · `404` unknown id · `409` duplicate email ·
-`422` validation error (bad email, blank name, invalid `sort_by`)
-
-## Examples
-
-```bash
-# Create
-curl -X POST http://127.0.0.1:8000/api/v1/contacts \
-  -H 'content-type: application/json' \
-  -d '{"first_name":"Katherine","last_name":"Johnson","email":"katherine@example.com",
-       "phone":"+1-757-555-0199","company":"NASA","job_title":"Mathematician"}'
-
-# Search + paginate
-curl "http://127.0.0.1:8000/api/v1/contacts?search=nasa&limit=10&sort_by=last_name"
-
-# Partial update
-curl -X PATCH http://127.0.0.1:8000/api/v1/contacts/1 \
-  -H 'content-type: application/json' -d '{"phone":"+1-415-555-0000"}'
-
-# Delete
-curl -X DELETE http://127.0.0.1:8000/api/v1/contacts/1
-```
-
-## Tests
+## Test
 
 ```bash
 .venv/bin/python -m pytest
 ```
 
-Tests run against their own empty in-memory database with seeding disabled
-(see `tests/conftest.py`).
+Tests run through FastAPI's `TestClient` on their own empty in-memory database with seeding off (`tests/conftest.py`). `test_openapi.py` checks the published schema; `test_contacts_api.py` covers the endpoints.
 
 ## Layout
 
 ```
-app/
-  main.py             FastAPI app, lifespan startup, /health and /
-  config.py           Environment-driven settings
-  database.py         Engine, session factory, StaticPool wiring
-  models.py           Contact ORM model
-  schemas.py          Pydantic request/response models
-  crud.py             Database operations (search, sort, paginate)
-  seed.py             Sample contacts inserted on first run
-  routers/contacts.py REST endpoints
-tests/                API tests via FastAPI TestClient
+app/main.py             app, lifespan startup, /health and /
+app/config.py           environment settings
+app/database.py         engine, session factory, StaticPool wiring
+app/models.py           Contact and Address ORM models
+app/schemas.py          Pydantic request and response models, photo checks
+app/crud.py             search, sort, paginate
+app/seed.py             sample contacts for an empty database
+app/routers/contacts.py REST endpoints
+tests/                  API tests
 ```
